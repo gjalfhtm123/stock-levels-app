@@ -12,6 +12,7 @@ from streamlit_local_storage import LocalStorage
 import FinanceDataReader as fdr
 import requests
 import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
 
 # ------------------------------
 # 유틸
@@ -115,17 +116,22 @@ def decision_engine(P,H,trend_ma,drop_threshold):
 # ------------------------------
 # 뉴스 + 감성
 # ------------------------------
-def get_yahoo_news(code):
+def get_naver_news(code):
     try:
-        url=f"https://finance.yahoo.com/rss/headline?s={code}.KS"
-        r=requests.get(url,timeout=5)
-        root=ET.fromstring(r.content)
-        items=[]
-        for item in root.findall(".//item")[:5]:
-            title=item.find("title").text
-            link=item.find("link").text
-            items.append((title,link))
-        return items
+        url = f"https://finance.naver.com/item/news_news.naver?code={code}&mode=RANK"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=5)
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select(".title a")[:5]
+
+        news = []
+        for item in items:
+            title = item.get_text(strip=True)
+            link = "https://finance.naver.com" + item["href"]
+            news.append((title, link))
+
+        return news
     except:
         return []
 
@@ -207,6 +213,18 @@ if run:
     st.write(f"2차: {krw(H*0.90)}")
     st.write(f"3차: {krw(H*0.85)}")
 
+    st.subheader("📉 매도 기준")
+
+    if trend_ma:
+        st.write(f"손절(추세 이탈): {krw(trend_ma)}")
+    else:
+        st.write("손절: 추세선 데이터 부족")
+
+    st.write(f"1차 목표(최근 고점): {krw(H)}")
+
+if atr:
+    st.write(f"2차 목표(고점+ATR): {krw(H + atr)}")
+
     if avg_price>0:
         st.subheader("🎯 평단 기준 목표")
         st.write(f"+10%: {krw(avg_price*1.1)}")
@@ -214,7 +232,7 @@ if run:
         st.write(f"-10%: {krw(avg_price*0.9)}")
 
     st.subheader("📰 최신 뉴스 + 감성")
-    news=get_yahoo_news(code)
+    news = get_naver_news(code)
     if news:
         for title,link in news:
             senti=simple_sentiment(title)
@@ -234,3 +252,4 @@ if run:
         ))
     fig.update_layout(height=500)
     st.plotly_chart(fig,use_container_width=True)
+
