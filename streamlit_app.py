@@ -178,16 +178,16 @@ avg_price=st.number_input("내 평단(선택)",min_value=0,value=0,step=1000)
 run=st.button("계산")
 
 if run:
-    df=fdr.DataReader(code)
-    df=df[df.index>=datetime.now()-timedelta(days=365*2)]
-    close=df["Close"]
+    df = fdr.DataReader(code)
+    df = df[df.index >= datetime.now() - timedelta(days=365*2)]
 
-    P=float(close.iloc[-1])
-    H=float(close.tail(lookback).max())
-    L=float(close.tail(lookback).min())
+    close = df["Close"]
+    P = float(close.iloc[-1])
+    H = float(close.tail(lookback).max())
+    L = float(close.tail(lookback).min())
 
-    trend_ma=safe_ma(close,trend_ma_period)
-    atr=calc_atr(df)
+    trend_ma = safe_ma(close, trend_ma_period)
+    atr = calc_atr(df)   # ← 이 줄 반드시 있어야 함
 
     verdict,guide=decision_engine(P,H,trend_ma,drop_threshold)
 
@@ -252,4 +252,5 @@ if atr:
         ))
     fig.update_layout(height=500)
     st.plotly_chart(fig,use_container_width=True)
+
 
