@@ -167,3 +167,23 @@ if st.button("계산"):
                       annotation_text=label)
 
     st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+st.subheader("📊 참고값(세부)")
+
+detail_rows = [
+    ("현재가(종가)", lv["P"]),
+    (f"최근 {lookback}일 고점", lv["H"]),
+    (f"최근 {lookback}일 저점", lv["L"]),
+    ("20일선", lv["ma20"]),
+    ("60일선", lv["ma60"]),
+    ("200일선", lv["ma200"]),
+    ("상태", "고점권" if lv["P"] >= lv["H"] * 0.995 else "일반 구간"),
+]
+
+st.table(
+    pd.DataFrame(
+        [(k, krw(v) if k != "상태" else v) for k, v in detail_rows],
+        columns=["항목", "값"]
+    )
+)
