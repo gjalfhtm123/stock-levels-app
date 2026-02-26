@@ -13,6 +13,7 @@ import FinanceDataReader as fdr
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+from email.utils import parsedate_to_datetime
 
 # ------------------------------
 # 유틸
@@ -67,7 +68,7 @@ def calc_score(df, P, H, trend_ma, atr):
         details.append("과도 조정 +15")
 
     # 3️⃣ 변동성 (15점)
-    if atr:
+    if atr is not None:
         atr_pct = atr/P
         if atr_pct < 0.02:
             score += 15
@@ -116,32 +117,48 @@ def decision_engine(P,H,trend_ma,drop_threshold):
 # ------------------------------
 # 뉴스 + 감성
 # ------------------------------
-def _parse_rss_items(xml_bytes, limit=6):
+def _parse_rss_items(xml_bytes, limit=6, max_age_days=7):
     root = ET.fromstring(xml_bytes)
     out = []
-    for item in root.findall(".//item")[:limit]:
+    now = datetime.now()
+
+    for item in root.findall(".//item"):
         title_el = item.find("title")
         link_el = item.find("link")
         pub_el = item.find("pubDate")
+
         title = title_el.text if title_el is not None else ""
         link = link_el.text if link_el is not None else ""
-        pub = pub_el.text if pub_el is not None else ""
+        pub  = pub_el.text  if pub_el is not None else ""
+
+        # 날짜 필터
+        try:
+            dt = parsedate_to_datetime(pub).replace(tzinfo=None)
+            if (now - dt).days > max_age_days:
+                continue
+        except:
+            # 날짜 파싱 실패하면 그냥 제외(오래된거 섞이는거 방지)
+            continue
+
         if title and link:
             out.append((title, link, pub))
+        if len(out) >= limit:
+            break
+
     return out
 
 
 def get_google_news_rss(query, limit=6):
     # 한국/한국어 뉴스 위주
     # 참고: q에 회사명 + 종목코드 같이 넣으면 검색정확도가 올라감
-    q = quote(query)
+    q = quote(query + " when:3d")
     url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers, timeout=6)
         if r.status_code != 200:
             return []
-        return _parse_rss_items(r.content, limit=limit)
+        return _parse_rss_items(r.content, limit=limit, max_age_days=3)
     except:
         return []
 
@@ -244,6 +261,11 @@ avg_price=st.number_input("내 평단(선택)",min_value=0,value=0,step=1000)
 
 run=st.button("계산")
 
+P = None
+H = None
+trend_ma = None
+atr = None
+
 if run:
     df = fdr.DataReader(code)
     df = df[df.index >= datetime.now() - timedelta(days=365*2)]
@@ -289,7 +311,7 @@ if run:
 
     st.write(f"1차 목표(최근 고점): {krw(H)}")
 
-if atr:
+if atr is not None:
     st.write(f"2차 목표(고점+ATR): {krw(H + atr)}")
 
     if avg_price>0:
@@ -325,6 +347,7 @@ if atr:
         ))
     fig.update_layout(height=500)
     st.plotly_chart(fig,use_container_width=True)
+
 
 
 
