@@ -212,7 +212,7 @@ def position_summary(lv: dict):
         return f"{base} · {trend}"
     return base
 
-def decision_engine(lv: dict, lookback: int):
+def decision_engine(lv: dict, lookback: int, buy_drop_threshold: float, trend_ma_period: int, df2: pd.DataFrame):
     """
     초보자용 의사결정 엔진:
     - 고점 대비 하락률
@@ -237,15 +237,21 @@ def decision_engine(lv: dict, lookback: int):
         else:
             reasons.append(f"최근 {lookback}일 고점 대비 크게 조정(-10% 이하)")
 
-    # 2) 장기 추세(200일선)
+    # 2) 장기 추세(선택한 이동평균선 기준)
     trend = None
-    if ma200 is not None and P is not None:
-        if P >= ma200:
+    trend_ma = None
+
+    close = df2["Close"].dropna()
+    if len(close) >= trend_ma_period:
+        trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
+
+    if trend_ma is not None and P is not None:
+        if P >= trend_ma:
             trend = "up"
-            reasons.append("200일선 위(장기 추세 유지)")
+            reasons.append(f"{trend_ma_period}일선 위(추세 유지)")
         else:
             trend = "down"
-            reasons.append("200일선 아래(장기 추세 약화)")
+            reasons.append(f"{trend_ma_period}일선 아래(추세 약화)")
 
     # 3) 변동성(ATR%)
     atr_pct = None
@@ -269,7 +275,7 @@ def decision_engine(lv: dict, lookback: int):
     guide = "추격 매수보다, 눌림/분할 구간을 기다리는 게 안전해요."
 
     # 매수 쪽
-    if drop is not None and drop <= -0.08 and trend != "down":
+    if drop is not None and drop <= -(buy_drop_threshold / 100) and trend != "down":
         verdict = "🟢 분할 매수 고려"
         tone = "risk_g"
         guide = "한 번에 사지 말고 1~3차로 나눠서 접근해요."
@@ -587,7 +593,13 @@ if run:
         card("리스크(변동성)", rg, rg_desc, rg_tone)
         
     # ✅ 의사결정 카드(요약 아래)
-    verdict, tone, guide, reasons = decision_engine(lv, lookback)
+    verdict, tone, guide, reasons = decision_engine(
+    lv,
+    lookback,
+    buy_drop_threshold,
+    trend_ma_period,
+    df2
+)
 
     st.markdown("### 🧭 지금 사도 되나? / 지금 팔아야 되나?")
     card("결론", verdict, guide, tone)
@@ -602,10 +614,17 @@ if run:
     m1.metric("현재가(종가)", krw(lv["P"]))
     m2.metric(f"최근 {lookback}일 고점", krw(lv["H"]))
     m3.metric(f"최근 {lookback}일 저점", krw(lv["L"]))
-    trend_text = "데이터 부족"
-    if lv["ma200"] is not None:
-        trend_text = "상승(200일선 위)" if lv["P"] >= lv["ma200"] else "주의(200일선 아래)"
-    m4.metric("장기추세", trend_text)
+trend_text = "데이터 부족"
+
+close = df2["Close"].dropna()
+trend_ma = None
+if len(close) >= trend_ma_period:
+    trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
+
+if trend_ma is not None and lv["P"] is not None:
+    trend_text = f"상승({trend_ma_period}일선 위)" if lv["P"] >= trend_ma else f"주의({trend_ma_period}일선 아래)"
+
+m4.metric("장기추세", trend_text)
 
     # 매수
     st.markdown("## ✅ 추천 매수 구간(분할)")
@@ -653,10 +672,18 @@ if run:
     # =========================
     st.markdown("## 📋 알림/메모용 텍스트 (복사해서 쓰기)")
 
+    # 선택한 추세 이평선 계산 (알림 텍스트용)
+    close = df2["Close"].dropna()
+    trend_ma = None
+    if len(close) >= trend_ma_period:
+        trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
+
     # 텍스트 만들기
     lines = []
     lines.append(f"[{name}({code})]  |  프리셋: {preset}")
-    lines.append(f"- 현재가: {krw(lv['P'])} / 최근{lookback}일 고점: {krw(lv['H'])} / 200일선: {krw(lv['ma200'])}")
+    lines.append(
+    f"- 현재가: {krw(lv['P'])} / 최근{lookback}일 고점: {krw(lv['H'])} / {trend_ma_period}일선: {krw(trend_ma)}"
+)
     lines.append(f"- 매수: 1차 {krw(lv['buy8'])} / 2차 {krw(lv['buy10'])} / 3차 {krw(lv['buy15'])}")
     if sell_mode == "추세 이탈 시 축소(이평 이탈)":
         lines.append(f"- 관리: 20일선 {krw(lv['ma20'])}, 60일선 {krw(lv['ma60'])}, 200일선 {krw(lv['ma200'])} 이탈 시 점검")
@@ -716,6 +743,21 @@ if run:
         if len(close) >= 200:
             fig.add_trace(go.Scatter(x=df2.index, y=close.rolling(200).mean(), mode="lines", name="200일선", opacity=0.6))
 
+        # 선택한 추세선 강조
+        trend_ma = None
+        if len(close) >= trend_ma_period:
+            trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
+            fig.add_trace(
+                go.Scatter(
+                    x=df2.index,
+                    y=close.rolling(trend_ma_period).mean(),
+                    mode="lines",
+                    name=f"{trend_ma_period}일선(기준)",
+                    line=dict(width=4)  # 굵게
+                )
+            )
+
+
         for y, label in [(lv["buy8"], "매수 -8%"), (lv["buy10"], "매수 -10%"), (lv["buy15"], "매수 -15%")]:
             fig.add_hline(y=y, line_dash="dash", annotation_text=label)
 
@@ -727,5 +769,6 @@ if run:
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
 
 
