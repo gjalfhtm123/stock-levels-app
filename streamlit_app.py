@@ -12,7 +12,7 @@ from streamlit_local_storage import LocalStorage
 import FinanceDataReader as fdr
 import requests
 import xml.etree.ElementTree as ET
-from bs4 import BeautifulSoup
+from urllib.parse import quote
 
 # ------------------------------
 # 유틸
@@ -116,44 +116,111 @@ def decision_engine(P,H,trend_ma,drop_threshold):
 # ------------------------------
 # 뉴스 + 감성
 # ------------------------------
-def get_naver_news(code):
+def _parse_rss_items(xml_bytes, limit=6):
+    root = ET.fromstring(xml_bytes)
+    out = []
+    for item in root.findall(".//item")[:limit]:
+        title_el = item.find("title")
+        link_el = item.find("link")
+        pub_el = item.find("pubDate")
+        title = title_el.text if title_el is not None else ""
+        link = link_el.text if link_el is not None else ""
+        pub = pub_el.text if pub_el is not None else ""
+        if title and link:
+            out.append((title, link, pub))
+    return out
+
+
+def get_google_news_rss(query, limit=6):
+    # 한국/한국어 뉴스 위주
+    # 참고: q에 회사명 + 종목코드 같이 넣으면 검색정확도가 올라감
+    q = quote(query)
+    url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        url = f"https://finance.naver.com/item/news_news.naver?code={code}&mode=RANK"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=5)
-
-        soup = BeautifulSoup(r.text, "html.parser")
-        items = soup.select(".title a")[:5]
-
-        news = []
-        for item in items:
-            title = item.get_text(strip=True)
-            link = "https://finance.naver.com" + item["href"]
-            news.append((title, link))
-
-        return news
+        r = requests.get(url, headers=headers, timeout=6)
+        if r.status_code != 200:
+            return []
+        return _parse_rss_items(r.content, limit=limit)
     except:
         return []
 
-def simple_sentiment(text):
-    positive_words=["gain","rise","surge","beat","growth","profit","record","strong"]
-    negative_words=["fall","drop","loss","weak","decline","cut","miss","risk"]
 
-    score=0
-    t=text.lower()
-    for w in positive_words:
-        if w in t:
-            score+=1
-    for w in negative_words:
-        if w in t:
-            score-=1
+def get_yahoo_rss(ticker_with_suffix, limit=6):
+    url = f"https://finance.yahoo.com/rss/headline?s={ticker_with_suffix}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, headers=headers, timeout=6)
+        if r.status_code != 200:
+            return []
+        return _parse_rss_items(r.content, limit=limit)
+    except:
+        return []
 
-    if score>0:
-        return "🟢 긍정"
-    elif score<0:
-        return "🔴 부정"
+
+def get_free_news(code, name, market=None, limit=6):
+    # 1) Google News RSS: 회사명 + 코드 (가장 잘 뜸)
+    q1 = f"{name} {code} 주가"
+    news = get_google_news_rss(q1, limit=limit)
+    if news:
+        return "Google News", news
+
+    # 2) Google News RSS: 회사명만
+    q2 = f"{name} 주식"
+    news = get_google_news_rss(q2, limit=limit)
+    if news:
+        return "Google News", news
+
+    # 3) (옵션) Yahoo RSS: KOSPI/KOSDAQ 구분 못하면 .KS 먼저 시도
+    # market이 있으면 더 정확히 할 수 있음
+    suffixes = []
+    if market:
+        # KOSPI/KOSDAQ
+        if "KOSDAQ" in str(market).upper():
+            suffixes = [".KQ", ".KS"]
+        else:
+            suffixes = [".KS", ".KQ"]
     else:
-        return "🟡 중립"
+        suffixes = [".KS", ".KQ"]
+
+    for sfx in suffixes:
+        news = get_yahoo_rss(code + sfx, limit=limit)
+        if news:
+            return "Yahoo Finance", news
+
+    return None, []
+
+def simple_sentiment(title: str):
+    t = (title or "").lower()
+
+    pos = [
+        # EN
+        "gain","rise","surge","beat","growth","profit","record","strong","upgrade",
+        # KR
+        "호재","상승","급등","강세","최고","신고가","돌파","개선","흑자","호황","수혜",
+        "기대","확대","성장","증가","상향"
+    ]
+    neg = [
+        # EN
+        "fall","drop","loss","weak","decline","cut","miss","risk","downgrade",
+        # KR
+        "악재","하락","급락","약세","최저","신저가","부진","적자","우려","경고","충격",
+        "감소","축소","하향","리스크","불확실"
+    ]
+
+    score = 0
+    for w in pos:
+        if w in t:
+            score += 1
+    for w in neg:
+        if w in t:
+            score -= 1
+
+    if score > 0:
+        return "🟢 긍정"
+    if score < 0:
+        return "🔴 부정"
+    return "🟡 중립"
 
 # ------------------------------
 # UI 시작
@@ -232,13 +299,19 @@ if atr:
         st.write(f"-10%: {krw(avg_price*0.9)}")
 
     st.subheader("📰 최신 뉴스 + 감성")
-    news = get_naver_news(code)
+
+    # market 정보 있으면 더 좋음 (listing에서 row["Market"]로 전달)
+    source, news = get_free_news(code=code, name=name, market=row.get("Market", None), limit=6)
+
     if news:
-        for title,link in news:
-            senti=simple_sentiment(title)
+        st.caption(f"출처: {source} · 최근 기사 {len(news)}개")
+        for title, link, pub in news:
+            senti = simple_sentiment(title)
             st.markdown(f"**[{title}]({link})**  → {senti}")
+            if pub:
+                st.caption(pub)
     else:
-        st.write("뉴스를 불러오지 못했습니다.")
+        st.info("뉴스를 불러오지 못했습니다. (무료 RSS도 가끔 막히거나 지연될 수 있어요)")
 
     st.subheader("📉 차트")
     fig=go.Figure()
@@ -252,5 +325,6 @@ if atr:
         ))
     fig.update_layout(height=500)
     st.plotly_chart(fig,use_container_width=True)
+
 
 
