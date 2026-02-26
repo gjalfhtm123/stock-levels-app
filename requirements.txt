@@ -1,5 +1,6 @@
 streamlit
-finance-datareader
 pandas
+FinanceDataReader
 plotly
 streamlit-local-storage
+requests
