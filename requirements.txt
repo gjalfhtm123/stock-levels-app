@@ -2,3 +2,4 @@ streamlit
 finance-datareader
 pandas
 plotly
+streamlit-local-storage
