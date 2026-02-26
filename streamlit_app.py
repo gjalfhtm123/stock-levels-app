@@ -614,17 +614,17 @@ if run:
     m1.metric("현재가(종가)", krw(lv["P"]))
     m2.metric(f"최근 {lookback}일 고점", krw(lv["H"]))
     m3.metric(f"최근 {lookback}일 저점", krw(lv["L"]))
-trend_text = "데이터 부족"
+    trend_text = "데이터 부족"
 
-close = df2["Close"].dropna()
-trend_ma = None
-if len(close) >= trend_ma_period:
-    trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
+    close = df2["Close"].dropna()
+    trend_ma = None
+    if len(close) >= trend_ma_period:
+        trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
 
-if trend_ma is not None and lv["P"] is not None:
+    if trend_ma is not None and lv["P"] is not None:
     trend_text = f"상승({trend_ma_period}일선 위)" if lv["P"] >= trend_ma else f"주의({trend_ma_period}일선 아래)"
 
-m4.metric("장기추세", trend_text)
+    m4.metric("장기추세", trend_text)
 
     # 매수
     st.markdown("## ✅ 추천 매수 구간(분할)")
@@ -769,6 +769,7 @@ m4.metric("장기추세", trend_text)
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
 
 
 
