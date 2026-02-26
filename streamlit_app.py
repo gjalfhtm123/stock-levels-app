@@ -216,20 +216,31 @@ def _default_favs():
     return ["000660", "005930"]  # SK하이닉스, 삼성전자
 
 def load_favs_from_browser():
-    raw = localS.getItem(LOCAL_KEY, key="fav_get_item")
+    # 어떤 버전은 getItem(key="...")를 지원하고, 어떤 버전은 지원 안 함
+    try:
+        raw = localS.getItem(LOCAL_KEY, key="fav_get_item")
+    except TypeError:
+        raw = localS.getItem(LOCAL_KEY)
+
     if raw is None or raw == "":
         return None
+
     try:
         data = json.loads(raw)
         if isinstance(data, list):
             return [str(x).zfill(6) for x in data]
     except:
         return None
+
     return None
 
 def save_favs_to_browser(codes: list[str]):
     codes = [str(c).zfill(6) for c in codes]
-    localS.setItem(LOCAL_KEY, json.dumps(codes))
+    payload = json.dumps(codes)
+    try:
+        localS.setItem(LOCAL_KEY, payload, key="fav_set_item")
+    except TypeError:
+        localS.setItem(LOCAL_KEY, payload)
 
 # 세션 초기화
 if "fav_codes" not in st.session_state:
@@ -561,3 +572,4 @@ if run:
     st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
