@@ -1,8 +1,10 @@
+import json
 import streamlit as st
 import FinanceDataReader as fdr
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from streamlit_local_storage import LocalStorage
 
 # =========================
 # Helpers
@@ -64,10 +66,6 @@ def safe_ma(series: pd.Series, window: int):
     return float(series.rolling(window).mean().iloc[-1])
 
 def calc_atr(df: pd.DataFrame, period: int = 14):
-    """
-    ATR(14) = TR의 period 이동평균
-    TR = max(High-Low, abs(High-prevClose), abs(Low-prevClose))
-    """
     needed_cols = {"High", "Low", "Close"}
     if not needed_cols.issubset(df.columns):
         return None
@@ -89,12 +87,6 @@ def calc_atr(df: pd.DataFrame, period: int = 14):
     return float(atr.iloc[-1])
 
 def calc_pivots(df: pd.DataFrame):
-    """
-    전일 고/저/종 기준 Pivot / R1 / R2
-    Pivot = (H+L+C)/3
-    R1 = 2*Pivot - L
-    R2 = Pivot + (H-L)
-    """
     needed_cols = {"High", "Low", "Close"}
     if not needed_cols.issubset(df.columns) or len(df) < 2:
         return None, None, None
@@ -128,30 +120,23 @@ def calc_levels(df: pd.DataFrame, lookback: int):
         "atr14": atr14,
         "pivot": pivot, "r1": r1, "r2": r2,
         "near_high": near_high,
-        # buy levels from recent high
         "buy8": H * 0.92,
         "buy10": H * 0.90,
         "buy15": H * 0.85,
-        # warning levels
         "risk10": H * 0.90,
         "risk15": H * 0.85,
     }
 
 def pick_defense_line(defense_mode: str, lv: dict):
-    """R:R 계산에 쓸 방어선 선택"""
     if defense_mode == "고점-10%":
         return lv["risk10"]
     if defense_mode == "20일선":
         return lv["ma20"]
     if defense_mode == "60일선":
         return lv["ma60"]
-    # 기본
     return lv["risk10"]
 
 def build_sell_targets(lv: dict, basis: str, stages: int, defense_mode: str):
-    """
-    사용자가 선택한 basis에 따라 목표가 후보를 (최대 3단) 만들어줌.
-    """
     P = lv["P"]
     H = lv["H"]
     atr = lv["atr14"]
@@ -163,24 +148,19 @@ def build_sell_targets(lv: dict, basis: str, stages: int, defense_mode: str):
     if defense is not None:
         risk = P - float(defense)
 
-    # stage 목표 리스트(최대 3개)
     targets = []
 
-    # 1) 최근고점 기반
     if basis == "최근고점(H)":
         if stages == 1:
             targets = [H]
         else:
-            # 고점 + ATR을 더해서 단계 만들기 (ATR 없으면 1~3%로 대체)
             if atr is not None:
                 targets = [H, H + atr, H + 2 * atr]
             else:
                 targets = [H, H * 1.03, H * 1.06]
 
-    # 2) 피벗 기반
     elif basis == "피벗 R1/R2":
         if r1 is None or r2 is None:
-            # 데이터 없으면 fallback
             if atr is not None:
                 targets = [P + atr, P + 2 * atr, P + 3 * atr]
             else:
@@ -191,29 +171,24 @@ def build_sell_targets(lv: dict, basis: str, stages: int, defense_mode: str):
             elif stages == 2:
                 targets = [r1, r2]
             else:
-                # R2 이후는 ATR로 확장 (없으면 +3% 대체)
                 if atr is not None:
                     targets = [r1, r2, r2 + atr]
                 else:
                     targets = [r1, r2, r2 * 1.03]
 
-    # 3) ATR 기반
     elif basis == "ATR(변동성)":
         if atr is None:
-            # fallback
             targets = [P * 1.03, P * 1.06, P * 1.09]
         else:
             if stages == 1:
-                targets = [P + 2 * atr]  # 기본은 2ATR
+                targets = [P + 2 * atr]
             elif stages == 2:
                 targets = [P + 1 * atr, P + 2 * atr]
             else:
                 targets = [P + 1 * atr, P + 2 * atr, P + 3 * atr]
 
-    # 4) R:R 기반
     elif basis == "R:R(손절 대비)":
         if risk is None or risk <= 0:
-            # 방어선이 현재가 이상이거나 데이터 부족이면 fallback
             if atr is not None:
                 targets = [P + atr, P + 2 * atr, P + 3 * atr]
             else:
@@ -226,33 +201,149 @@ def build_sell_targets(lv: dict, basis: str, stages: int, defense_mode: str):
             else:
                 targets = [P + 2 * risk, P + 3 * risk, P + 4 * risk]
 
-    # stages만큼 자르기
     targets = targets[:stages]
-    # 반올림
     targets = [float(t) for t in targets]
     return targets, defense
+
+# =========================
+# Favorites (Browser Local Storage)
+# =========================
+LOCAL_KEY = "fav_codes_v1"  # localStorage key
+localS = LocalStorage()
+
+def _default_favs():
+    # 기본 즐겨찾기(원하는대로 바꿔도 됨)
+    return ["000660", "005930"]  # SK하이닉스, 삼성전자
+
+def load_favs_from_browser():
+    raw = localS.getItem(LOCAL_KEY, key="fav_get_item")
+    if raw is None or raw == "":
+        return None
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [str(x).zfill(6) for x in data]
+    except:
+        return None
+    return None
+
+def save_favs_to_browser(codes: list[str]):
+    codes = [str(c).zfill(6) for c in codes]
+    localS.setItem(LOCAL_KEY, json.dumps(codes))
+
+# 세션 초기화
+if "fav_codes" not in st.session_state:
+    st.session_state.fav_codes = _default_favs()
+if "fav_loaded" not in st.session_state:
+    st.session_state.fav_loaded = False
+if "fav_pick_code" not in st.session_state:
+    st.session_state.fav_pick_code = None
+
+# 1회만 브라우저에서 로드(가능하면)
+if not st.session_state.fav_loaded:
+    loaded = load_favs_from_browser()
+    if loaded:
+        st.session_state.fav_codes = loaded
+    else:
+        # 브라우저에 없으면 기본값을 최초 저장
+        save_favs_to_browser(st.session_state.fav_codes)
+    st.session_state.fav_loaded = True
 
 # =========================
 # App UI
 # =========================
 st.set_page_config(page_title="국장 매수/매도 기준값 계산기", layout="centered")
-st.title("국장 매수/매도 기준값 계산기 (매도 설정 선택형)")
+st.title("국장 매수/매도 기준값 계산기 (즐겨찾기 저장됨)")
 
 listing = load_krx_listing()
+code_to_name = dict(zip(listing["Code"], listing["Name"]))
+display_by_code = dict(zip(listing["Code"], listing["Display"]))
 
+# -------------------------
+# Favorites UI
+# -------------------------
+st.subheader("⭐ 즐겨찾기 (폰/PC 브라우저에 저장)")
+fav_codes_existing = [c for c in st.session_state.fav_codes if c in display_by_code]
+
+# 즐겨찾기 버튼들
+if fav_codes_existing:
+    cols = st.columns(min(5, len(fav_codes_existing)))
+    for i, c in enumerate(fav_codes_existing):
+        with cols[i % len(cols)]:
+            label = code_to_name.get(c, c)
+            if st.button(f"⭐ {label}", use_container_width=True):
+                st.session_state.fav_pick_code = c
+else:
+    st.info("즐겨찾기가 비어 있어요. 아래에서 종목을 선택하고 ‘추가’ 해보세요.")
+
+# 즐겨찾기 관리 버튼
+m1, m2, m3 = st.columns(3)
+with m1:
+    if st.button("🔄 즐겨찾기 새로고침(브라우저에서 다시 읽기)", use_container_width=True):
+        loaded = load_favs_from_browser()
+        if loaded is not None:
+            st.session_state.fav_codes = loaded
+        st.rerun()
+with m2:
+    if st.button("🧹 즐겨찾기 초기화(기본값)", use_container_width=True):
+        st.session_state.fav_codes = _default_favs()
+        save_favs_to_browser(st.session_state.fav_codes)
+        st.rerun()
+with m3:
+    if st.button("❌ 즐겨찾기 전체 삭제", use_container_width=True):
+        st.session_state.fav_codes = []
+        save_favs_to_browser([])
+        st.rerun()
+
+st.divider()
+
+# -------------------------
+# Stock select (synced with favorites)
+# -------------------------
 st.subheader("1) 종목 선택")
-default_name = "SK하이닉스"
-default_idx = int(listing.index[listing["Name"] == default_name][0]) if (listing["Name"] == default_name).any() else 0
+
+# 즐겨찾기 버튼으로 선택했다면 그 코드로 기본값 잡기
+picked_code = st.session_state.fav_pick_code
+if picked_code and picked_code in display_by_code:
+    default_display = display_by_code[picked_code]
+else:
+    # 기본값: 즐겨찾기 첫 번째가 있으면 그걸로
+    default_code = fav_codes_existing[0] if fav_codes_existing else "000660"
+    default_display = display_by_code.get(default_code, listing["Display"].iloc[0])
+
+display_list = listing["Display"].tolist()
+try:
+    default_idx = int(display_list.index(default_display))
+except:
+    default_idx = 0
 
 selected_display = st.selectbox(
     "종목명을 검색해서 선택하세요 (코드 입력 X)",
-    options=listing["Display"].tolist(),
+    options=display_list,
     index=default_idx
 )
 row = listing[listing["Display"] == selected_display].iloc[0]
 code = row["Code"]
 name = row["Name"]
 
+# 종목 선택 후 즐겨찾기 추가/제거
+f1, f2 = st.columns(2)
+with f1:
+    if st.button("➕ 현재 종목 즐겨찾기 추가", use_container_width=True):
+        if code not in st.session_state.fav_codes:
+            st.session_state.fav_codes.append(code)
+            save_favs_to_browser(st.session_state.fav_codes)
+        st.rerun()
+with f2:
+    if st.button("🗑️ 현재 종목 즐겨찾기 제거", use_container_width=True):
+        if code in st.session_state.fav_codes:
+            st.session_state.fav_codes.remove(code)
+            save_favs_to_browser(st.session_state.fav_codes)
+        st.rerun()
+
+# -------------------------
+# Basic settings
+# -------------------------
 st.subheader("2) 기본 설정")
 c1, c2 = st.columns(2)
 with c1:
@@ -260,7 +351,11 @@ with c1:
 with c2:
     avg_price = st.number_input("내 평단(원) (선택)", min_value=0, value=0, step=1000)
 
+# -------------------------
+# Sell settings (user selectable)
+# -------------------------
 st.subheader("3) 매도 설정 (사용자가 선택)")
+
 sell_mode = st.radio(
     "매도 방식",
     ["단계 익절(추천)", "목표가 도달 시 전량 익절", "추세 이탈 시 축소(이평 이탈)"],
@@ -285,9 +380,8 @@ if sell_mode == "단계 익절(추천)":
 elif sell_mode == "목표가 도달 시 전량 익절":
     stages = 1
 else:
-    stages = 0  # 추세 이탈 모드: 목표가 대신 이평선 기준 제시
+    stages = 0
 
-# 단계익절 비중
 weights = None
 if sell_mode == "단계 익절(추천)":
     if stages == 2:
@@ -307,6 +401,9 @@ if sell_mode == "단계 익절(추천)":
 
 run = st.button("계산")
 
+# =========================
+# Compute & Render
+# =========================
 if run:
     with st.spinner("데이터 불러오는 중..."):
         df = load_price(code)
@@ -315,7 +412,6 @@ if run:
         st.error("데이터를 가져오지 못했어요. 잠시 후 다시 시도해 주세요.")
         st.stop()
 
-    # 최근 2년만 (UI 가독성)
     two_years_ago = datetime.now() - timedelta(days=365 * 2)
     df2 = df[df.index >= two_years_ago].copy()
     if df2.empty:
@@ -324,12 +420,8 @@ if run:
 
     lv = calc_levels(df2, lookback)
 
-    # -------------------------
-    # 요약
-    # -------------------------
     st.markdown("---")
     st.subheader(f"📌 {name} ({code}) 요약")
-
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("현재가(종가)", krw(lv["P"]))
     m2.metric(f"최근 {lookback}일 고점(H)", krw(lv["H"]))
@@ -339,20 +431,15 @@ if run:
         trend_text = "상승(200일선 위)" if lv["P"] >= lv["ma200"] else "주의(200일선 아래)"
     m4.metric("장기추세", trend_text)
 
-    # -------------------------
-    # 초보자 설명
-    # -------------------------
     with st.expander("📖 추천 가격이 이렇게 계산됩니다 (초보자용)"):
         st.markdown(f"""
-- **추천 매수(-8/-10/-15)**는 최근 {lookback}일 고점(H) 기준 조정폭입니다.
-- **ATR(변동성)**은 최근 14일간 평균 흔들림(원 단위)이며, 목표가/손절을 종목 성격에 맞게 잡는 데 유용합니다.
-- **피벗 R1/R2**는 전일 고/저/종으로 계산하는 대표 저항선입니다.
-- **R:R(손절 대비)**는 내가 정한 방어선(손절 기준) 대비 수익 목표를 2배/3배로 잡는 방식입니다.
+- 추천 매수(-8/-10/-15)는 최근 {lookback}일 고점(H) 기준 조정폭입니다.
+- 목표가 기준은 사용자가 선택할 수 있어요:
+  - **ATR(변동성)**: 종목의 ‘요즘 흔들림(원)’을 반영
+  - **피벗 R1/R2**: 전일 고/저/종 기반 대표 저항선
+  - **R:R(손절 대비)**: 방어선(손절) 대비 2배/3배 수익 목표
         """)
 
-    # -------------------------
-    # 추천 매수 구간 (카드)
-    # -------------------------
     st.markdown("## ✅ 추천 매수 구간")
     b1, b2, b3 = st.columns(3)
     with b1:
@@ -362,9 +449,6 @@ if run:
     with b3:
         card("3차 (-15%)", krw(lv["buy15"]), f"고점 × 0.85 = {krw(lv['H'])} × 0.85", "buy")
 
-    # -------------------------
-    # 추천 리스크/매도 구간 (경고)
-    # -------------------------
     st.markdown("## 🛡️ 추천 리스크/매도(경고) 구간")
     r1c, r2c, r3c = st.columns(3)
     with r1c:
@@ -374,11 +458,7 @@ if run:
     with r3c:
         card("200일선", krw(lv["ma200"]), "장기 추세 기준(이탈 시 주의)", "warn")
 
-    # -------------------------
-    # 매도 설정 결과(사용자 선택 반영)
-    # -------------------------
     st.markdown("## 🎯 내가 선택한 매도 설정 결과")
-
     sell_targets = []
     defense_line = None
 
@@ -393,13 +473,11 @@ if run:
     else:
         sell_targets, defense_line = build_sell_targets(lv, basis, stages, defense_mode)
 
-        # 표시용 카드
         if sell_mode == "목표가 도달 시 전량 익절":
             card("전량 익절 목표가", krw(sell_targets[0]), f"기준: {basis}", "sell")
             if defense_line is not None:
                 st.caption(f"R:R 방어선({defense_mode}): {krw(defense_line)}")
         else:
-            # 단계익절
             if weights is None:
                 st.warning("비중 설정이 유효하지 않습니다(합계 100% 확인).")
             else:
@@ -410,9 +488,6 @@ if run:
                 if defense_line is not None:
                     st.caption(f"R:R 방어선({defense_mode}): {krw(defense_line)}")
 
-    # -------------------------
-    # 평단 기준(보조)
-    # -------------------------
     if avg_price and avg_price > 0:
         st.markdown("## 📌 (보조) 내 평단 기준 참고 목표/방어")
         tp1 = avg_price * 1.10
@@ -427,9 +502,6 @@ if run:
         with t4: card("방어 -10%", krw(sl1), "리스크 제한", "warn")
         with t5: card("방어 -15%", krw(sl2), "강한 방어", "warn")
 
-    # -------------------------
-    # 참고값(세부 표)
-    # -------------------------
     st.markdown("---")
     st.subheader("📊 참고값(세부)")
     detail_rows = [
@@ -453,9 +525,6 @@ if run:
             table_data.append((k, krw(v)))
     st.table(pd.DataFrame(table_data, columns=["항목", "값"]))
 
-    # -------------------------
-    # 차트 (수평선 표시)
-    # -------------------------
     st.markdown("## 📈 최근 2년 차트")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df2.index, y=df2["Close"], mode="lines", name="종가"))
@@ -468,7 +537,6 @@ if run:
     if len(close) >= 200:
         fig.add_trace(go.Scatter(x=df2.index, y=close.rolling(200).mean(), mode="lines", name="200일선", opacity=0.6))
 
-    # 매수/경고선
     for y, label in [
         (lv["buy8"], "매수 -8%"),
         (lv["buy10"], "매수 -10%"),
@@ -478,12 +546,10 @@ if run:
     ]:
         fig.add_hline(y=y, line_dash="dash", annotation_text=label)
 
-    # 매도 목표선(사용자 선택)
     if sell_mode != "추세 이탈 시 축소(이평 이탈)" and sell_targets:
         for i, t in enumerate(sell_targets, start=1):
             fig.add_hline(y=t, line_dash="dot", annotation_text=f"목표 {i}")
 
-    # 방어선 (R:R용)
     if defense_line is not None:
         fig.add_hline(y=float(defense_line), line_dash="dash", annotation_text=f"방어선({defense_mode})")
 
