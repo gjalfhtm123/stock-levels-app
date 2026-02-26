@@ -4,4 +4,3 @@ finance-datareader
 plotly
 requests
 streamlit-local-storage
-beautifulsoup4
