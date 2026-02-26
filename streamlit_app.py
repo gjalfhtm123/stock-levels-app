@@ -212,6 +212,86 @@ def position_summary(lv: dict):
         return f"{base} · {trend}"
     return base
 
+def decision_engine(lv: dict, lookback: int):
+    """
+    초보자용 의사결정 엔진:
+    - 고점 대비 하락률
+    - 200일선 위/아래(장기 추세)
+    - 변동성(ATR%) 기반으로
+      [매수/관망/축소] 결론 + 이유 3줄을 반환
+    """
+    P, H = lv.get("P"), lv.get("H")
+    ma200 = lv.get("ma200")
+    atr = lv.get("atr14")
+
+    reasons = []
+
+    # 1) 고점 대비 위치
+    drop = None
+    if P and H:
+        drop = (P / H) - 1.0  # 음수면 고점 대비 하락
+        if drop >= -0.03:
+            reasons.append(f"최근 {lookback}일 고점 대비 거의 근처(추격 매수 주의)")
+        elif drop >= -0.10:
+            reasons.append(f"최근 {lookback}일 고점 대비 조정 구간(분할 접근 유리)")
+        else:
+            reasons.append(f"최근 {lookback}일 고점 대비 크게 조정(-10% 이하)")
+
+    # 2) 장기 추세(200일선)
+    trend = None
+    if ma200 is not None and P is not None:
+        if P >= ma200:
+            trend = "up"
+            reasons.append("200일선 위(장기 추세 유지)")
+        else:
+            trend = "down"
+            reasons.append("200일선 아래(장기 추세 약화)")
+
+    # 3) 변동성(ATR%)
+    atr_pct = None
+    vol = None
+    if atr is not None and P:
+        atr_pct = atr / P
+        if atr_pct < 0.02:
+            vol = "low"
+            reasons.append("변동성 낮음(안정적인 편)")
+        elif atr_pct < 0.04:
+            vol = "mid"
+            reasons.append("변동성 보통")
+        else:
+            vol = "high"
+            reasons.append("변동성 높음(급등락 주의)")
+
+    # ===== 결론 규칙(단순/일관성 우선) =====
+    # 기본: 관망
+    verdict = "🟡 관망"
+    tone = "risk_y"
+    guide = "추격 매수보다, 눌림/분할 구간을 기다리는 게 안전해요."
+
+    # 매수 쪽
+    if drop is not None and drop <= -0.08 and trend != "down":
+        verdict = "🟢 분할 매수 고려"
+        tone = "risk_g"
+        guide = "한 번에 사지 말고 1~3차로 나눠서 접근해요."
+
+    # 매도/축소 쪽
+    if trend == "down":
+        verdict = "🔴 비중 축소/매도 고려"
+        tone = "risk_r"
+        guide = "장기 추세가 약해져서, 리스크를 먼저 줄이는 게 좋아요."
+
+    # 고점권 + 변동성 높음이면 더 강하게 관망
+    if drop is not None and drop >= -0.03 and vol == "high":
+        verdict = "🟡 관망(고점권·변동성↑)"
+        tone = "risk_y"
+        guide = "고점권에서 흔들림이 커서, 눌림 확인 후 접근을 추천해요."
+
+    # 이유는 최대 3개만(초보자용)
+    reasons = reasons[:3] if reasons else ["데이터가 부족해 보수적으로 관망을 추천해요."]
+
+    return verdict, tone, guide, reasons
+
+
 def preset_to_settings(preset: str):
     if preset == "안정형(보수)":
         return {
@@ -505,6 +585,17 @@ if run:
         card("현재 위치", pos, f"기준: 최근고점({lookback}일) + 200일선", "neutral")
     with b:
         card("리스크(변동성)", rg, rg_desc, rg_tone)
+        
+    # ✅ 의사결정 카드(요약 아래)
+    verdict, tone, guide, reasons = decision_engine(lv, lookback)
+
+    st.markdown("### 🧭 지금 사도 되나? / 지금 팔아야 되나?")
+    card("결론", verdict, guide, tone)
+
+    st.markdown("**이유(간단):**")
+    for r in reasons:
+        st.markdown(f"- {r}")
+
 
     st.subheader(f"📌 {name} ({code})")
     m1, m2, m3, m4 = st.columns(4)
@@ -636,4 +727,5 @@ if run:
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
 
