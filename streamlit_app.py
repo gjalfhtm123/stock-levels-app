@@ -452,26 +452,28 @@ lookback = st.slider("고점/저점 기준 기간(일)", 20, 120, 60)
 avg_price = st.number_input("내 평단(원) (선택)", min_value=0, value=0, step=1000)
 
 # 고급 설정(숨김)
+# 프리셋 기본값을 먼저 적용
+basis = preset_settings["basis"]
+sell_mode = preset_settings["sell_mode"]
+defense_mode = preset_settings["defense"]
+
+# 고급 설정(원하는 사람만) — expander 안에서 선택하면 덮어쓰기 됩니다.
 with st.expander("⚙️ 고급 설정(원하는 사람만)"):
     basis = st.selectbox(
         "목표가 기준",
         ["ATR(변동성)", "최근고점(H)", "피벗 R1/R2", "R:R(손절 대비)"],
-        index=["ATR(변동성)", "최근고점(H)", "피벗 R1/R2", "R:R(손절 대비)"].index(preset_settings["basis"])
+        index=["ATR(변동성)", "최근고점(H)", "피벗 R1/R2", "R:R(손절 대비)"].index(basis)
     )
     sell_mode = st.selectbox(
         "매도 방식",
         ["단계 익절(추천)", "목표가 도달 시 전량 익절", "추세 이탈 시 축소(이평 이탈)"],
-        index=["단계 익절(추천)", "목표가 도달 시 전량 익절", "추세 이탈 시 축소(이평 이탈)"].index(preset_settings["sell_mode"])
+        index=["단계 익절(추천)", "목표가 도달 시 전량 익절", "추세 이탈 시 축소(이평 이탈)"].index(sell_mode)
     )
     defense_mode = st.selectbox(
         "R:R 방어선(손절 기준)",
         ["고점-10%", "20일선", "60일선"],
-        index=["고점-10%", "20일선", "60일선"].index(preset_settings["defense"])
+        index=["고점-10%", "20일선", "60일선"].index(defense_mode)
     )
-else:
-    basis = preset_settings["basis"]
-    sell_mode = preset_settings["sell_mode"]
-    defense_mode = preset_settings["defense"]
 
 run = st.button("계산")
 
@@ -634,3 +636,4 @@ if run:
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
