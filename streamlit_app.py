@@ -622,7 +622,7 @@ if run:
         trend_ma = float(close.rolling(trend_ma_period).mean().iloc[-1])
 
     if trend_ma is not None and lv["P"] is not None:
-    trend_text = f"상승({trend_ma_period}일선 위)" if lv["P"] >= trend_ma else f"주의({trend_ma_period}일선 아래)"
+        trend_text = f"상승({trend_ma_period}일선 위)" if lv["P"] >= trend_ma else f"주의({trend_ma_period}일선 아래)"
 
     m4.metric("장기추세", trend_text)
 
@@ -769,6 +769,7 @@ if run:
         st.plotly_chart(fig, use_container_width=True)
 
     st.caption("※ 본 앱은 과거 가격/이평/변동성 기반 기준값을 계산해 보여주는 도구이며, 투자 판단과 책임은 사용자에게 있습니다.")
+
 
 
 
