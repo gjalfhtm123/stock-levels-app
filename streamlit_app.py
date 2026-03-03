@@ -248,9 +248,27 @@ def save_favs(codes):
 st.set_page_config(page_title="국장 분석툴 3.2", layout="centered")
 st.title("📊 국장 분석툴 3.2")
 
-listing = fdr.StockListing("KRX")
-listing["Code"] = listing["Code"].astype(str).str.zfill(6)
-listing["Display"] = listing["Name"] + " (" + listing["Code"] + ")"
+@st.cache_data(ttl=60*60*6)  # 6시간 캐시(일시 장애에도 버팀)
+def load_krx_listing():
+    df = fdr.StockListing("KRX")  # 여기서 가끔 JSONDecodeError 남
+    df["Code"] = df["Code"].astype(str).str.zfill(6)
+    df["Display"] = df["Name"] + " (" + df["Code"] + ")"
+    return df
+
+def fallback_listing():
+    # 최소한 앱이 뜨도록 기본 몇 종목만 제공(즐겨찾기용)
+    df = pd.DataFrame({
+        "Name": ["삼성전자", "SK하이닉스", "NAVER", "카카오", "LG에너지솔루션"],
+        "Code": ["005930", "000660", "035420", "035720", "373220"],
+    })
+    df["Display"] = df["Name"] + " (" + df["Code"] + ")"
+    return df
+
+try:
+    listing = load_krx_listing()
+except Exception as e:
+    st.warning("KRX 종목 목록을 불러오지 못해요(일시적). 기본 목록으로 실행합니다.")
+    listing = fallback_listing()
 
 # 세션 즐겨찾기 초기화
 if "favs" not in st.session_state:
@@ -447,3 +465,4 @@ if run:
         ))
     fig.update_layout(height=500)
     st.plotly_chart(fig, use_container_width=True)
+
